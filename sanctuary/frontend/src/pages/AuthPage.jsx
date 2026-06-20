@@ -36,20 +36,25 @@ const AuthPage = () => {
   const [resending, setResending] = useState(false);
 
   const handleLogin = async (e) => {
-    e.preventDefault();
-    setLoginError("");
-    setLoading(true);
-    try {
-      const userData = await login(loginEmail, loginPassword);
-      toast.success(`Welcome back, ${userData.name}!`);
-      navigate(userData.role === "admin" ? "/admin" : "/dashboard");
-    } catch (error) {
-      const message = error.response?.data?.detail || "Invalid email or password. Please try again.";
-      setLoginError(message);
-    } finally {
-      setLoading(false);
+  e.preventDefault();
+  setLoginError("");
+  setLoading(true);
+  try {
+    const userData = await login(loginEmail, loginPassword);
+    toast.success(`Welcome back, ${userData.name}!`);
+    navigate(userData.role === "admin" ? "/admin" : "/dashboard");
+  } catch (error) {
+    let message = "Invalid email or password. Please try again.";
+    if (error.response?.status === 422) {
+      message = "Please enter a valid email address.";
+    } else if (error.response?.data?.detail) {
+      message = error.response.data.detail;
     }
-  };
+    setLoginError(message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleSignup = async (e) => {
   e.preventDefault();

@@ -53,11 +53,8 @@ logger = logging.getLogger(__name__)
 # ============ EMAIL HELPERS ============
 
 def send_email(to_email: str, subject: str, html_body: str) -> bool:
-    """Sends an email via SMTP. Returns True on success, False otherwise.
-    If SMTP isn't configured, logs the email instead of sending (useful for local dev)."""
     if not SMTP_USER or not SMTP_PASSWORD:
         logger.warning(f"SMTP not configured. Would have sent email to {to_email}: {subject}")
-        logger.info(f"Email body preview: {html_body[:200]}")
         return False
     try:
         msg = MIMEMultipart("alternative")
@@ -66,7 +63,7 @@ def send_email(to_email: str, subject: str, html_body: str) -> bool:
         msg["To"] = to_email
         msg.attach(MIMEText(html_body, "html"))
 
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
             server.starttls()
             server.login(SMTP_USER, SMTP_PASSWORD)
             server.sendmail(SMTP_USER, to_email, msg.as_string())
@@ -327,9 +324,11 @@ async def resend_otp(data: ResendOtpRequest):
     send_otp_email(user["email"], user["name"], otp)
     return {"message": "Verification code resent"}
 
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_MINUTES = 15
+
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
-    # Special, hard-coded path for the single allowed admin account.
     if credentials.email.lower() == ADMIN_EMAIL.lower():
         if credentials.password != ADMIN_PASSWORD:
             raise HTTPException(status_code=401, detail="Invalid email or password")
@@ -348,12 +347,31 @@ async def login(credentials: UserLogin):
             user=UserResponse(id=admin["id"], email=admin["email"], name=admin["name"], role="admin"))
 
     user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
-    if not user or not verify_password(credentials.password, user["password"]):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user:
+        raise HTTPException(status_code=401, detail="No account found with this email")
+
+    # Check lockout
+    locked_until = user.get("locked_until")
+    if locked_until and datetime.now(timezone.utc) < datetime.fromisoformat(locked_until):
+        raise HTTPException(status_code=429, detail="Too many failed attempts. Please try again in 15 minutes.")
+
+    if not verify_password(credentials.password, user["password"]):
+        attempts = user.get("failed_attempts", 0) + 1
+        update = {"failed_attempts": attempts}
+        if attempts >= MAX_LOGIN_ATTEMPTS:
+            update["locked_until"] = (datetime.now(timezone.utc) + timedelta(minutes=LOCKOUT_MINUTES)).isoformat()
+            await db.users.update_one({"email": credentials.email}, {"$set": update})
+            raise HTTPException(status_code=429, detail="Too many failed attempts. Account locked for 15 minutes.")
+        await db.users.update_one({"email": credentials.email}, {"$set": update})
+        remaining = MAX_LOGIN_ATTEMPTS - attempts
+        raise HTTPException(status_code=401, detail=f"Incorrect password. {remaining} attempt(s) remaining.")
+
+    # Successful login resets the counter
+    await db.users.update_one({"email": credentials.email}, {"$set": {"failed_attempts": 0}, "$unset": {"locked_until": ""}})
+
     if not user.get("is_verified"):
         raise HTTPException(status_code=403, detail="Please verify your email before signing in")
     if user.get("role") == "admin" and user["email"].lower() != ADMIN_EMAIL.lower():
-        # Safety net: strip stale admin role from anyone who isn't the designated admin
         await db.users.update_one({"email": user["email"]}, {"$set": {"role": "user"}})
         user["role"] = "user"
 
