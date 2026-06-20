@@ -26,15 +26,15 @@ const Footer = () => (
           <ul className="space-y-4">
             <li className="flex items-start gap-3">
               <MapPin className="w-5 h-5 text-[#D4AF37] flex-shrink-0 mt-0.5" />
-              <span className="text-white/70">123 Serenity Lane<br />Coastal Paradise, CP 12345</span>
+              <span className="text-white/70">Kathmandu, Nepal</span>
             </li>
             <li className="flex items-center gap-3">
               <Phone className="w-5 h-5 text-[#D4AF37]" />
-              <span className="text-white/70">+1 (555) 123-4567</span>
+              <span className="text-white/70">+977 9861601893</span>
             </li>
             <li className="flex items-center gap-3">
               <Mail className="w-5 h-5 text-[#D4AF37]" />
-              <span className="text-white/70">reservations@sanctuary.com</span>
+              <span className="text-white/70">shishirgyawali222@gmail.com</span>
             </li>
           </ul>
         </div>

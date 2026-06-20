@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../App";
-import { Menu, X, User } from "lucide-react";
+import { Menu, X, User, Leaf } from "lucide-react";
 import { Button } from "./ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./ui/dropdown-menu";
 
@@ -30,8 +30,9 @@ const Navbar = ({ transparent = false }) => {
     <nav data-testid="navbar" className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${bgClass}`}>
       <div className="max-w-7xl mx-auto px-6 md:px-12">
         <div className="flex items-center justify-between h-20">
-          <Link to="/" className={`font-display text-2xl font-medium tracking-tight ${textClass}`}>
-            The Sanctuary
+          <Link to="/" className={`flex items-center gap-2 font-display text-2xl font-medium tracking-tight ${textClass}`}>
+            <Leaf className="w-6 h-6 text-[#D4AF37]" strokeWidth={1.5} />
+            <span>The Sanctuary</span>
           </Link>
 
           <div className="hidden md:flex items-center gap-8">
@@ -58,6 +59,9 @@ const Navbar = ({ transparent = false }) => {
                 <DropdownMenuContent align="end" className="w-48">
                   <DropdownMenuItem asChild>
                     <Link to="/dashboard" data-testid="dashboard-link">My Bookings</Link>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem asChild>
+                    <Link to="/dashboard?tab=security" data-testid="change-password-link">Change Password</Link>
                   </DropdownMenuItem>
                   {user.role === "admin" && (
                     <DropdownMenuItem asChild>
@@ -97,6 +101,10 @@ const Navbar = ({ transparent = false }) => {
                   <Link to="/dashboard" onClick={() => setIsOpen(false)}
                     className="block text-[#1A3C34] font-body text-sm uppercase tracking-widest py-2">
                     My Bookings
+                  </Link>
+                  <Link to="/dashboard?tab=security" onClick={() => setIsOpen(false)}
+                    className="block text-[#1A3C34] font-body text-sm uppercase tracking-widest py-2">
+                    Change Password
                   </Link>
                   {user.role === "admin" && (
                     <Link to="/admin" onClick={() => setIsOpen(false)}

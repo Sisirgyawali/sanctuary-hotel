@@ -59,13 +59,34 @@ const AuthProvider = ({ children }) => {
     return userData;
   };
 
+  // Step 1: request a signup — backend creates an unverified user and emails an OTP.
+  // Does NOT log the user in yet.
   const signup = async (email, password, name) => {
     const response = await axios.post(`${API}/auth/signup`, { email, password, name });
+    return response.data; // { message, email }
+  };
+
+  // Step 2: verify the OTP — this is what actually logs the user in.
+  const verifyOtp = async (email, otp) => {
+    const response = await axios.post(`${API}/auth/verify-otp`, { email, otp });
     const { access_token, user: userData } = response.data;
     localStorage.setItem("token", access_token);
     setToken(access_token);
     setUser(userData);
     return userData;
+  };
+
+  const resendOtp = async (email) => {
+    const response = await axios.post(`${API}/auth/resend-otp`, { email });
+    return response.data;
+  };
+
+  const changePassword = async (currentPassword, newPassword) => {
+    const response = await axios.post(`${API}/auth/change-password`,
+      { current_password: currentPassword, new_password: newPassword },
+      { headers: { Authorization: `Bearer ${token}` } }
+    );
+    return response.data;
   };
 
   const logout = () => {
@@ -75,7 +96,7 @@ const AuthProvider = ({ children }) => {
   };
 
   return (
-    <AuthContext.Provider value={{ user, token, login, signup, logout, loading }}>
+    <AuthContext.Provider value={{ user, token, login, signup, verifyOtp, resendOtp, changePassword, logout, loading }}>
       {children}
     </AuthContext.Provider>
   );

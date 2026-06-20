@@ -198,7 +198,7 @@ const HomePage = () => {
             </Link>
             <Link to="/menu">
               <Button variant="outline" data-testid="view-menu-btn"
-                className="border-white text-white hover:bg-white hover:text-[#1A3C34] text-xs uppercase tracking-widest px-8 py-6">
+                className="bg-transparent border-2 border-white text-white hover:bg-white hover:text-[#1A3C34] text-xs uppercase tracking-widest px-8 py-6">
                 View Dining Menu
               </Button>
             </Link>

@@ -5,6 +5,10 @@ from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import logging
+import smtplib
+import random
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
@@ -26,16 +30,106 @@ SECRET_KEY = os.environ.get('JWT_SECRET', 'sanctuary-hotel-secret-key-2024')
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
 
+# Admin Config — ONLY this email/password combo can ever be admin
+ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'shishirgyawali222@gmail.com')
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'Shishir$1234')
+
+# Email (SMTP) Config — set these in your .env / Render environment variables
+SMTP_HOST = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+SMTP_PORT = int(os.environ.get('SMTP_PORT', '587'))
+SMTP_USER = os.environ.get('SMTP_USER', '')
+SMTP_PASSWORD = os.environ.get('SMTP_PASSWORD', '')
+SMTP_FROM_NAME = os.environ.get('SMTP_FROM_NAME', 'The Sanctuary Hotel')
+
+OTP_EXPIRE_MINUTES = 10
+
 app = FastAPI()
 api_router = APIRouter(prefix="/api")
 security = HTTPBearer()
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# ============ EMAIL HELPERS ============
+
+def send_email(to_email: str, subject: str, html_body: str) -> bool:
+    """Sends an email via SMTP. Returns True on success, False otherwise.
+    If SMTP isn't configured, logs the email instead of sending (useful for local dev)."""
+    if not SMTP_USER or not SMTP_PASSWORD:
+        logger.warning(f"SMTP not configured. Would have sent email to {to_email}: {subject}")
+        logger.info(f"Email body preview: {html_body[:200]}")
+        return False
+    try:
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
+        msg["To"] = to_email
+        msg.attach(MIMEText(html_body, "html"))
+
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.starttls()
+            server.login(SMTP_USER, SMTP_PASSWORD)
+            server.sendmail(SMTP_USER, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send email to {to_email}: {e}")
+        return False
+
+def generate_otp() -> str:
+    return str(random.randint(100000, 999999))
+
+def send_otp_email(to_email: str, name: str, otp: str):
+    subject = "Verify your email — The Sanctuary"
+    html = f"""
+    <div style="font-family: Georgia, serif; max-width: 480px; margin: auto; padding: 32px; background: #F5F2EB;">
+      <h1 style="color: #1A3C34; font-weight: 500;">The Sanctuary</h1>
+      <p style="color: #333;">Hi {name},</p>
+      <p style="color: #333;">Thank you for creating an account with us. Please use the verification code below to confirm your email address:</p>
+      <div style="background: #1A3C34; color: #D4AF37; font-size: 32px; letter-spacing: 8px; text-align: center; padding: 20px; margin: 24px 0;">
+        {otp}
+      </div>
+      <p style="color: #666; font-size: 14px;">This code will expire in {OTP_EXPIRE_MINUTES} minutes. If you didn't request this, you can safely ignore this email.</p>
+      <p style="color: #999; font-size: 12px; margin-top: 32px;">&copy; The Sanctuary Hotel</p>
+    </div>
+    """
+    send_email(to_email, subject, html)
+
+def send_welcome_email(to_email: str, name: str):
+    subject = "Welcome to The Sanctuary!"
+    html = f"""
+    <div style="font-family: Georgia, serif; max-width: 480px; margin: auto; padding: 32px; background: #F5F2EB;">
+      <h1 style="color: #1A3C34; font-weight: 500;">The Sanctuary</h1>
+      <p style="color: #333;">Hi {name},</p>
+      <p style="color: #333; line-height: 1.6;">
+        Welcome to The Sanctuary! Your account has been verified and is ready to go.
+        We're delighted to have you with us — an oasis of tranquility where luxury meets nature awaits.
+      </p>
+      <div style="text-align: center; margin: 32px 0;">
+        <a href="https://sanctuary-hotel.vercel.app/rooms"
+           style="background: #1A3C34; color: #fff; padding: 14px 32px; text-decoration: none; font-size: 13px;
+                  letter-spacing: 2px; text-transform: uppercase;">
+          Start Booking
+        </a>
+      </div>
+      <p style="color: #666; font-size: 14px;">We look forward to welcoming you soon.</p>
+      <p style="color: #999; font-size: 12px; margin-top: 32px;">&copy; The Sanctuary Hotel</p>
+    </div>
+    """
+    send_email(to_email, subject, html)
+
 # ============ MODELS ============
 
-class UserCreate(BaseModel):
+class SignupRequest(BaseModel):
     email: EmailStr
     password: str
     name: str
+
+class VerifyOtpRequest(BaseModel):
+    email: EmailStr
+    otp: str
+
+class ResendOtpRequest(BaseModel):
+    email: EmailStr
 
 class UserLogin(BaseModel):
     email: EmailStr
@@ -51,6 +145,14 @@ class TokenResponse(BaseModel):
     access_token: str
     token_type: str
     user: UserResponse
+
+class SignupResponse(BaseModel):
+    message: str
+    email: str
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(..., min_length=6)
 
 class RoomBase(BaseModel):
     name: str
@@ -142,28 +244,119 @@ async def get_admin_user(user: dict = Depends(get_current_user)):
 
 # ============ AUTH ROUTES ============
 
-@api_router.post("/auth/signup", response_model=TokenResponse)
-async def signup(user_data: UserCreate):
+@api_router.post("/auth/signup", response_model=SignupResponse)
+async def signup(user_data: SignupRequest):
+    """Step 1 of signup: validate, create an UNVERIFIED user, and email an OTP.
+    Pydantic's EmailStr already rejects malformed addresses (e.g. missing @, no domain)
+    before this code runs, and FastAPI returns a 422 with a clear message in that case."""
+
+    # Block signing up as the reserved admin email through the normal flow
+    if user_data.email.lower() == ADMIN_EMAIL.lower():
+        raise HTTPException(status_code=400, detail="This email is reserved. Please use a different email.")
+
     existing = await db.users.find_one({"email": user_data.email})
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already registered")
-    user_id = str(uuid.uuid4())
+    if existing and existing.get("is_verified"):
+        raise HTTPException(status_code=400, detail="Email already registered. Please sign in instead.")
+
+    if len(user_data.password) < 6:
+        raise HTTPException(status_code=400, detail="Password must be at least 6 characters long")
+
+    otp = generate_otp()
+    otp_expires = (datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
+
     user_doc = {
-        "id": user_id, "email": user_data.email,
+        "id": existing["id"] if existing else str(uuid.uuid4()),
+        "email": user_data.email,
         "password": hash_password(user_data.password),
-        "name": user_data.name, "role": "user",
+        "name": user_data.name,
+        "role": "user",
+        "is_verified": False,
+        "otp": otp,
+        "otp_expires": otp_expires,
         "created_at": datetime.now(timezone.utc).isoformat()
     }
-    await db.users.insert_one(user_doc)
-    token = create_token(user_id, user_data.email, "user")
+
+    if existing:
+        await db.users.update_one({"email": user_data.email}, {"$set": user_doc})
+    else:
+        await db.users.insert_one(user_doc)
+
+    send_otp_email(user_data.email, user_data.name, otp)
+
+    return SignupResponse(message="Verification code sent to your email", email=user_data.email)
+
+@api_router.post("/auth/verify-otp", response_model=TokenResponse)
+async def verify_otp(data: VerifyOtpRequest):
+    """Step 2 of signup: verify the OTP, activate the account, and log the user in."""
+    user = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="No pending signup found for this email")
+
+    if user.get("is_verified"):
+        raise HTTPException(status_code=400, detail="This account is already verified. Please sign in.")
+
+    if user.get("otp") != data.otp:
+        raise HTTPException(status_code=400, detail="Invalid verification code")
+
+    otp_expires = user.get("otp_expires")
+    if not otp_expires or datetime.now(timezone.utc) > datetime.fromisoformat(otp_expires):
+        raise HTTPException(status_code=400, detail="Verification code has expired. Please request a new one.")
+
+    await db.users.update_one(
+        {"email": data.email},
+        {"$set": {"is_verified": True}, "$unset": {"otp": "", "otp_expires": ""}}
+    )
+
+    send_welcome_email(user["email"], user["name"])
+
+    token = create_token(user["id"], user["email"], user["role"])
     return TokenResponse(access_token=token, token_type="bearer",
-        user=UserResponse(id=user_id, email=user_data.email, name=user_data.name, role="user"))
+        user=UserResponse(id=user["id"], email=user["email"], name=user["name"], role=user["role"]))
+
+@api_router.post("/auth/resend-otp")
+async def resend_otp(data: ResendOtpRequest):
+    user = await db.users.find_one({"email": data.email}, {"_id": 0})
+    if not user:
+        raise HTTPException(status_code=404, detail="No pending signup found for this email")
+    if user.get("is_verified"):
+        raise HTTPException(status_code=400, detail="This account is already verified. Please sign in.")
+
+    otp = generate_otp()
+    otp_expires = (datetime.now(timezone.utc) + timedelta(minutes=OTP_EXPIRE_MINUTES)).isoformat()
+    await db.users.update_one({"email": data.email}, {"$set": {"otp": otp, "otp_expires": otp_expires}})
+    send_otp_email(user["email"], user["name"], otp)
+    return {"message": "Verification code resent"}
 
 @api_router.post("/auth/login", response_model=TokenResponse)
 async def login(credentials: UserLogin):
+    # Special, hard-coded path for the single allowed admin account.
+    if credentials.email.lower() == ADMIN_EMAIL.lower():
+        if credentials.password != ADMIN_PASSWORD:
+            raise HTTPException(status_code=401, detail="Invalid email or password")
+        admin = await db.users.find_one({"email": ADMIN_EMAIL}, {"_id": 0})
+        if not admin:
+            admin_id = str(uuid.uuid4())
+            admin = {
+                "id": admin_id, "email": ADMIN_EMAIL,
+                "password": hash_password(ADMIN_PASSWORD), "name": "Hotel Admin",
+                "role": "admin", "is_verified": True,
+                "created_at": datetime.now(timezone.utc).isoformat()
+            }
+            await db.users.insert_one(admin)
+        token = create_token(admin["id"], admin["email"], "admin")
+        return TokenResponse(access_token=token, token_type="bearer",
+            user=UserResponse(id=admin["id"], email=admin["email"], name=admin["name"], role="admin"))
+
     user = await db.users.find_one({"email": credentials.email}, {"_id": 0})
     if not user or not verify_password(credentials.password, user["password"]):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+    if not user.get("is_verified"):
+        raise HTTPException(status_code=403, detail="Please verify your email before signing in")
+    if user.get("role") == "admin" and user["email"].lower() != ADMIN_EMAIL.lower():
+        # Safety net: strip stale admin role from anyone who isn't the designated admin
+        await db.users.update_one({"email": user["email"]}, {"$set": {"role": "user"}})
+        user["role"] = "user"
+
     token = create_token(user["id"], user["email"], user["role"])
     return TokenResponse(access_token=token, token_type="bearer",
         user=UserResponse(id=user["id"], email=user["email"], name=user["name"], role=user["role"]))
@@ -171,6 +364,16 @@ async def login(credentials: UserLogin):
 @api_router.get("/auth/me", response_model=UserResponse)
 async def get_me(user: dict = Depends(get_current_user)):
     return UserResponse(id=user["id"], email=user["email"], name=user["name"], role=user["role"])
+
+@api_router.post("/auth/change-password")
+async def change_password(data: ChangePasswordRequest, user: dict = Depends(get_current_user)):
+    if user["email"].lower() == ADMIN_EMAIL.lower():
+        raise HTTPException(status_code=400, detail="Admin password cannot be changed here")
+    if not verify_password(data.current_password, user["password"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    new_hash = hash_password(data.new_password)
+    await db.users.update_one({"id": user["id"]}, {"$set": {"password": new_hash}})
+    return {"message": "Password updated successfully"}
 
 # ============ ROOMS ROUTES ============
 
@@ -313,13 +516,6 @@ async def seed_data():
     if existing_rooms > 0:
         return {"message": "Data already seeded"}
 
-    admin_id = str(uuid.uuid4())
-    await db.users.insert_one({
-        "id": admin_id, "email": "admin@sanctuary.com",
-        "password": hash_password("admin123"), "name": "Hotel Admin",
-        "role": "admin", "created_at": datetime.now(timezone.utc).isoformat()
-    })
-
     rooms = [
         {
             "id": str(uuid.uuid4()), "name": "Standard Garden View", "room_type": "Standard",
@@ -365,7 +561,7 @@ async def seed_data():
     await db.rooms.insert_many(rooms)
 
     menu_items = [
-        {"id": str(uuid.uuid4()), "name": "Eggs Benedict", "description": "Poached eggs on English muffin with house hollandaise sauce and smoked salmon", "price": 18.00, "category": "Breakfast", "image_url": "https://images.unsplash.com/photo-1608039829572-9b0189d4c5a1?w=400&q=80", "is_available": True},
+        {"id": str(uuid.uuid4()), "name": "Eggs Benedict", "description": "Poached eggs on English muffin with house hollandaise sauce and smoked salmon", "price": 18.00, "category": "Breakfast", "image_url": "https://images.unsplash.com/photo-1608039829572-9b0189d4c5a1?w=400&q=80&fit=crop&auto=format", "is_available": True},
         {"id": str(uuid.uuid4()), "name": "Avocado Toast", "description": "Sourdough toast with smashed avocado, cherry tomatoes, feta and microgreens", "price": 15.00, "category": "Breakfast", "image_url": "https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?w=400&q=80", "is_available": True},
         {"id": str(uuid.uuid4()), "name": "Continental Platter", "description": "Seasonal fruits, artisan cheeses, house-baked pastries and preserves", "price": 22.00, "category": "Breakfast", "image_url": "https://images.unsplash.com/photo-1504754524776-8f4f37790ca0?w=400&q=80", "is_available": True},
         {"id": str(uuid.uuid4()), "name": "Grilled Salmon", "description": "Atlantic salmon with lemon butter sauce, capers and seasonal vegetables", "price": 32.00, "category": "Lunch", "image_url": "https://images.unsplash.com/photo-1467003909585-2f8a72700288?w=400&q=80", "is_available": True},
@@ -380,7 +576,7 @@ async def seed_data():
     ]
     await db.menu_items.insert_many(menu_items)
 
-    return {"message": "Data seeded successfully", "admin_email": "admin@sanctuary.com", "admin_password": "admin123"}
+    return {"message": "Data seeded successfully (rooms and menu only — no demo admin account is created)"}
 
 @api_router.get("/")
 async def root():
@@ -395,9 +591,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
