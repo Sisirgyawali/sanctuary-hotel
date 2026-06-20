@@ -52,21 +52,22 @@ logger = logging.getLogger(__name__)
 
 # ============ EMAIL HELPERS ============
 
+import resend
+
+RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
+resend.api_key = RESEND_API_KEY
+
 def send_email(to_email: str, subject: str, html_body: str) -> bool:
-    if not SMTP_USER or not SMTP_PASSWORD:
-        logger.warning(f"SMTP not configured. Would have sent email to {to_email}: {subject}")
+    if not RESEND_API_KEY:
+        logger.warning(f"Resend not configured. Would have sent email to {to_email}: {subject}")
         return False
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"{SMTP_FROM_NAME} <{SMTP_USER}>"
-        msg["To"] = to_email
-        msg.attach(MIMEText(html_body, "html"))
-
-        with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=10) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASSWORD)
-            server.sendmail(SMTP_USER, to_email, msg.as_string())
+        resend.Emails.send({
+            "from": f"{SMTP_FROM_NAME} <onboarding@resend.dev>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html_body,
+        })
         return True
     except Exception as e:
         logger.error(f"Failed to send email to {to_email}: {e}")
