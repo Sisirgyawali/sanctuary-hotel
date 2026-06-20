@@ -52,24 +52,43 @@ const AuthPage = () => {
   };
 
   const handleSignup = async (e) => {
-    e.preventDefault();
-    setSignupError("");
-    setLoading(true);
-    try {
-      const response = await axios.post(`${API}/auth/signup`, {
-        email: signupEmail, password: signupPassword, name: signupName
-      });
-      setOtpEmail(response.data.email);
-      setAwaitingOtp(true);
-      toast.success("Verification code sent to your email!");
-    } catch (error) {
-      const message = error.response?.data?.detail
-        || (error.response?.status === 422 ? "Please enter a valid email address." : "Signup failed. Please try again.");
-      setSignupError(message);
-    } finally {
-      setLoading(false);
+  e.preventDefault();
+  setSignupError("");
+
+  // Basic client-side email shape check before hitting the backend
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRegex.test(signupEmail)) {
+    setSignupError("Please enter a valid email address (e.g. name@example.com).");
+    return;
+  }
+
+  setLoading(true);
+  try {
+    const response = await axios.post(`${API}/auth/signup`, {
+      email: signupEmail, password: signupPassword, name: signupName
+    });
+    setOtpEmail(response.data.email);
+    setAwaitingOtp(true);
+    toast.success("Verification code sent to your email!");
+  } catch (error) {
+    let message = "Signup failed. Please try again.";
+    if (error.response?.status === 422) {
+      const detail = error.response?.data?.detail;
+      if (Array.isArray(detail)) {
+        message = detail[0]?.msg || "Please enter a valid email address.";
+      } else if (typeof detail === "string") {
+        message = detail;
+      } else {
+        message = "Please enter a valid email address.";
+      }
+    } else if (error.response?.data?.detail) {
+      message = error.response.data.detail;
     }
-  };
+    setSignupError(message);
+  } finally {
+    setLoading(false);
+  }
+};
 
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
