@@ -52,24 +52,29 @@ logger = logging.getLogger(__name__)
 
 # ============ EMAIL HELPERS ============
 
-import resend
+import sib_api_v3_sdk
+from sib_api_v3_sdk.rest import ApiException
 
-RESEND_API_KEY = os.environ.get('RESEND_API_KEY', '')
-resend.api_key = RESEND_API_KEY
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY', '')
 
 def send_email(to_email: str, subject: str, html_body: str) -> bool:
-    if not RESEND_API_KEY:
-        logger.warning(f"Resend not configured. Would have sent email to {to_email}: {subject}")
+    if not BREVO_API_KEY:
+        logger.warning(f"Brevo not configured. Would have sent email to {to_email}: {subject}")
         return False
     try:
-        resend.Emails.send({
-            "from": f"{SMTP_FROM_NAME} <onboarding@resend.dev>",
-            "to": [to_email],
-            "subject": subject,
-            "html": html_body,
-        })
+        configuration = sib_api_v3_sdk.Configuration()
+        configuration.api_key['api-key'] = BREVO_API_KEY
+        api_instance = sib_api_v3_sdk.TransactionalEmailsApi(sib_api_v3_sdk.ApiClient(configuration))
+
+        send_smtp_email = sib_api_v3_sdk.SendSmtpEmail(
+            to=[{"email": to_email}],
+            sender={"name": SMTP_FROM_NAME, "email": "shishirgyawali222@gmail.com"},
+            subject=subject,
+            html_content=html_body
+        )
+        api_instance.send_transac_email(send_smtp_email)
         return True
-    except Exception as e:
+    except ApiException as e:
         logger.error(f"Failed to send email to {to_email}: {e}")
         return False
 
